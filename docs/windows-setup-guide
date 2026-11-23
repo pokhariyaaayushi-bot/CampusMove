@@ -1,1 +1,168 @@
+# CampusMove on Windows
+
+This guide uses Docker Desktop to run the complete project: Flask backend,
+MySQL database, and browser UI. Team members do **not** need to install MySQL
+or configure Python locally.
+
+## 1. Install the one prerequisite
+
+1. Install [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/).
+2. During installation, enable the **WSL 2** backend if Docker Desktop asks.
+3. Open Docker Desktop and wait until it says that Docker is running.
+4. Open **PowerShell** and verify the installation:
+
+   ```powershell
+   docker --version
+   docker compose version
+   ```
+
+If either command is not recognized, restart PowerShell after installing Docker
+Desktop. If Docker reports a WSL error, run `wsl --update` in an Administrator
+PowerShell, restart Windows, and open Docker Desktop again.
+
+## 2. Get the project
+
+Either clone the repository or extract the shared project ZIP. Open PowerShell
+in the folder that contains `docker-compose.yml`.
+
+Example:
+
+```powershell
+cd "$HOME\Downloads\CampusMove 2"
+dir docker-compose.yml
+```
+
+The second command must list `docker-compose.yml`. Do not run the commands
+from the `backend` or `frontend` subfolder.
+
+## 3. Start CampusMove
+
+Run:
+
+```powershell
+docker compose up --build
+```
+
+The first run downloads the MySQL and Python images, so it can take several
+minutes. Leave this PowerShell window open while the project runs. When the
+log shows `Running on http://127.0.0.1:5000`, open:
+
+<http://127.0.0.1:5001/>
+
+`5001` is the host port; the Flask server uses port `5000` inside Docker.
+
+To run the project in the background instead:
+
+```powershell
+docker compose up --build -d
+docker compose ps
+```
+
+Use this command to view logs afterward:
+
+```powershell
+docker compose logs -f backend
+```
+
+Stop log viewing with `Ctrl+C`. This does not stop the project.
+
+## 4. Load the demo data
+
+The first start creates an empty MySQL schema. In a **second** PowerShell
+window, load the shared demo data once:
+
+```powershell
+cd "$HOME\Downloads\CampusMove 2"
+docker compose exec backend python backend/seed.py
+```
+
+Refresh the browser after the command completes. The command is safe to run
+again; existing demo records are skipped.
+
+If you have a legacy SQLite backup named `legacysqllitedb`, import it instead
+of using the demo seed:
+
+```powershell
+docker compose exec backend python backend/migrate_sqlite_to_mysql.py --source /app/legacysqllitedb
+```
+
+## Common problems
+
+### `docker` is not recognized
+
+Docker Desktop is not installed correctly, is not running, or PowerShell was
+opened before installation. Start Docker Desktop, wait for it to become ready,
+then close and reopen PowerShell.
+
+### Browser says the site cannot be reached
+
+Check the containers:
+
+```powershell
+docker compose ps
+```
+
+Both `campusmove-db` and `campusmove-backend` should be `Up`; the database
+should also be marked `healthy`. If the backend is not up, inspect its logs:
+
+```powershell
+docker compose logs --tail=100 backend
+```
+
+### Port 5001 is already in use
+
+Create a file named `.env` beside `docker-compose.yml`, based on `.env.example`.
+Add a free port, for example:
+
+```text
+HOST_PORT=5050
+```
+
+Restart the stack, then open `http://127.0.0.1:5050/`:
+
+```powershell
+docker compose down
+docker compose up --build
+```
+
+### Database data needs a complete reset
+
+This removes the local MySQL volume and all locally created data. Do this only
+when the data is disposable:
+
+```powershell
+docker compose down -v
+docker compose up --build -d
+docker compose exec backend python backend/seed.py
+```
+
+### Docker image download/build fails
+
+Confirm that Docker Desktop is running and that the computer has internet
+access and several GB of free disk space. Then retry:
+
+```powershell
+docker compose build --no-cache
+docker compose up
+```
+
+## Everyday commands
+
+```powershell
+# Start in the background
+docker compose up -d
+
+# See status
+docker compose ps
+
+# Watch backend logs
+docker compose logs -f backend
+
+# Stop containers without deleting MySQL data
+docker compose down
+```
+
+Keep `docker-compose.yml`, `backend/requirements.txt`, `db/schema.sql`, and
+`.env.example` unchanged unless the whole team agrees on a configuration
+change.
 
