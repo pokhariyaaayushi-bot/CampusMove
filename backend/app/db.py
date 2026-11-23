@@ -84,9 +84,36 @@ def _adapt_sql(sql: str, db_type: str) -> str:
     to ensure SQL statements remain portable across both engines.
     """
     if db_type == "mysql":
-        return sql.replace("?", "%s")
+        # SQLite's two-argument MAX is a scalar function. MySQL's MAX is an
+        # aggregate, so use its scalar equivalent for seat calculations.
+        return sql.replace("?", "%s").replace("MAX(0,", "GREATEST(0,")
     else:
         return sql.replace("%s", "?")
+
+
+def _adapt_schema_sql(sql: str, db_type: str) -> str:
+    """Keep the canonical schema MySQL-first while allowing SQLite test runs."""
+    if db_type == "sqlite":
+        return (
+            sql.replace("INTEGER AUTO_INCREMENT PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
+            .replace("INSERT IGNORE", "INSERT OR IGNORE")
+        )
+    # MySQL supports IF NOT EXISTS for tables but not indexes. Duplicate-index
+    # errors are handled explicitly by init_db below.
+    return sql.replace("CREATE INDEX IF NOT EXISTS", "CREATE INDEX")
+
+
+def _sql_statements(sql: str):
+    """Return executable statements from our schema/seed files.
+
+    MySQL execution is statement-by-statement. Remove full-line SQL comments
+    first, because comments may contain a semicolon that must not be treated
+    as a statement boundary.
+    """
+    uncommented = "\n".join(
+        line for line in sql.splitlines() if not line.lstrip().startswith("--")
+    )
+    return (statement.strip() for statement in uncommented.split(";") if statement.strip())
 
 
 def execute_query(sql: str, params=None, fetch: str = "all", db_conn=None):
@@ -160,15 +187,33 @@ def init_db(schema_path: str = None, db_conn=None):
         schema_sql = f.read()
 
     conn = db_conn if db_conn is not None else get_db()
-    if getattr(g, "db_type", "sqlite") == "sqlite" or hasattr(conn, "row_factory"):
+    db_type = getattr(g, "db_type", "sqlite")
+    schema_sql = _adapt_schema_sql(schema_sql, db_type)
+    if db_type == "sqlite" or hasattr(conn, "row_factory"):
         conn.executescript(schema_sql)
         conn.commit()
     else:
         cursor = conn.cursor()
-        for statement in schema_sql.split(";"):
-            stmt = statement.strip()
-            if stmt:
+        for stmt in _sql_statements(schema_sql):
+            try:
                 cursor.execute(stmt)
+            except Exception as exc:
+                # MySQL error 1061 is a duplicate index on subsequent
+                # application starts; the schema is otherwise unchanged.
+                if getattr(exc, "args", [None])[0] != 1061:
+                    raise
+        # Tables created by older CampusMove releases predate these columns.
+        # MySQL does not support ADD COLUMN IF NOT EXISTS, so ignore its
+        # duplicate-column error (1060) while applying the small upgrades.
+        for statement in (
+            "ALTER TABLE schedules ADD COLUMN direction VARCHAR(10) NOT NULL DEFAULT 'inbound'",
+            "ALTER TABLE notifications ADD COLUMN route_id INTEGER",
+        ):
+            try:
+                cursor.execute(statement)
+            except Exception as exc:
+                if getattr(exc, "args", [None])[0] != 1060:
+                    raise
         conn.commit()
         cursor.close()
 
@@ -183,14 +228,14 @@ def seed_db(seed_path: str = None, db_conn=None):
         seed_sql = f.read()
 
     conn = db_conn if db_conn is not None else get_db()
-    if getattr(g, "db_type", "sqlite") == "sqlite" or hasattr(conn, "row_factory"):
+    db_type = getattr(g, "db_type", "sqlite")
+    seed_sql = _adapt_schema_sql(seed_sql, db_type)
+    if db_type == "sqlite" or hasattr(conn, "row_factory"):
         conn.executescript(seed_sql)
         conn.commit()
     else:
         cursor = conn.cursor()
-        for statement in seed_sql.split(";"):
-            stmt = statement.strip()
-            if stmt:
-                cursor.execute(stmt)
+        for stmt in _sql_statements(seed_sql):
+            cursor.execute(stmt)
         conn.commit()
         cursor.close()
