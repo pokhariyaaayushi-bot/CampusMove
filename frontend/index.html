@@ -1,0 +1,1661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CampusMove — Friendly Campus Transit</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React & Babel for zero-build execution -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Friendly Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #ffffff; }
+  </style>
+</head>
+<body class="bg-white text-slate-800 min-h-screen flex flex-col">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const API_BASE = window.location.port === "5000" ? "/api" : "http://127.0.0.1:5000/api";
+
+    async function apiFetch(endpoint, options = {}) {
+      try {
+        const res = await fetch(`${API_BASE}${endpoint}`, {
+          headers: { "Content-Type": "application/json" },
+          ...options
+        });
+        const json = await res.json();
+        return json.data !== undefined ? json.data : json;
+      } catch (err) {
+        console.error("Fetch error on " + endpoint, err);
+        return null;
+      }
+    }
+
+    function App() {
+      const [role, setRole] = useState("student"); // 'student' or 'admin'
+      const [currentTab, setCurrentTab] = useState("dashboard");
+      const [vehicles, setVehicles] = useState([]);
+      const [drivers, setDrivers] = useState([]);
+      const [routes, setRoutes] = useState([]);
+      const [schedules, setSchedules] = useState([]);
+      const [requests, setRequests] = useState([]);
+      const [bookings, setBookings] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [toast, setToast] = useState(null);
+
+      // Deadlock visualizer state
+      const [deadlockState, setDeadlockState] = useState(null);
+      const [deadlockRunning, setDeadlockRunning] = useState(false);
+
+      // Priority queue state
+      const [priorityQueue, setPriorityQueue] = useState(null);
+
+      const showToast = (msg, type = "success") => {
+        setToast({ msg, type });
+        setTimeout(() => setToast(null), 3500);
+      };
+
+      const loadAllData = async () => {
+        setLoading(true);
+        const [v, d, r, s, req, b] = await Promise.all([
+          apiFetch("/vehicles"),
+          apiFetch("/drivers"),
+          apiFetch("/routes"),
+          apiFetch("/schedules"),
+          apiFetch("/requests"),
+          apiFetch("/bookings")
+        ]);
+        if (v) setVehicles(v);
+        if (d) setDrivers(d);
+        if (r) setRoutes(r);
+        if (s) setSchedules(s);
+        if (req) setRequests(req);
+        if (b) setBookings(b);
+        setLoading(false);
+      };
+
+      useEffect(() => {
+        loadAllData();
+      }, []);
+
+      const runDeadlockDetection = async () => {
+        setDeadlockRunning(true);
+        try {
+          const res = await fetch(`${API_BASE}/algorithms/deadlock-detect`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({})
+          });
+          const json = await res.json();
+          setDeadlockState(json.data);
+          showToast("Deadlock check complete — circular wait analyzed!", "info");
+        } catch (e) {
+          showToast("Could not complete deadlock check", "error");
+        }
+        setDeadlockRunning(false);
+      };
+
+      const fetchPriorityQueue = async () => {
+        const data = await apiFetch("/algorithms/priority-queue");
+        if (data) {
+          setPriorityQueue(data);
+          showToast("Queue re-ordered by priority!");
+        }
+      };
+
+      return (
+        <div class="min-h-screen flex flex-col bg-white">
+          {/* TOAST POPUP */}
+          {toast && (
+            <div className={`fixed bottom-6 right-6 z-50 px-5 py-3 rounded-2xl shadow-lg text-white font-medium flex items-center gap-2 transform transition-all ${
+              toast.type === 'error' ? 'bg-rose-500' : toast.type === 'info' ? 'bg-orange-500' : 'bg-emerald-600'
+            }`}>
+              <span>{toast.type === 'error' ? '⚠️' : '✨'}</span>
+              <span class="text-sm font-semibold">{toast.msg}</span>
+            </div>
+          )}
+
+          {/* CLEAN WHITE HEADER WITH WARM ORANGE ACCENTS */}
+          <header class="bg-white border-b border-orange-100 shadow-sm sticky top-0 z-40">
+            <div class="max-w-7xl mx-auto px-5 py-3.5 flex flex-wrap items-center justify-between gap-4">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-orange-500 rounded-2xl flex items-center justify-center text-xl shadow-md shadow-orange-500/20 text-white">
+                  🚌
+                </div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <h1 class="text-2xl font-black text-orange-600 tracking-tight">
+                      CampusMove
+                    </h1>
+                    <span class="text-[11px] bg-orange-50 text-orange-700 px-2.5 py-0.5 rounded-full font-bold border border-orange-200">
+                      Graphic Era Deemed to be University
+                    </span>
+                  </div>
+                  <p class="text-xs text-slate-500 font-medium">
+                    Dehradun • GEU • GEHU • Hospital • 5 Hostels • Team Movers
+                  </p>
+                </div>
+              </div>
+
+              {/* HUMAN ROLE TOGGLE */}
+              <div class="flex items-center gap-3">
+                <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Switch Mode:</span>
+                <div class="bg-slate-100 p-1 rounded-2xl flex gap-1 border border-slate-200">
+                  <button 
+                    onClick={() => { setRole("student"); if (currentTab === "fleet") setCurrentTab("dashboard"); }}
+                    class={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      role === "student" 
+                        ? "bg-white text-orange-600 shadow-sm font-extrabold" 
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}>
+                    🎓 Student
+                  </button>
+                  <button 
+                    onClick={() => setRole("admin")}
+                    class={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      role === "admin" 
+                        ? "bg-orange-500 text-white shadow-sm font-extrabold" 
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}>
+                    🛡️ Administrator
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* SIMPLE CLEAN NAVIGATION TABS */}
+            <div class="border-t border-slate-100 bg-white">
+              <div class="max-w-7xl mx-auto px-5 flex overflow-x-auto gap-1 py-1">
+                {[
+                  { id: "dashboard", label: "Overview" },
+                  { id: "booking", label: "Book a Ride" },
+                  { id: "routes_map", label: "🗺️ Campus & City Landmarks" },
+                  ...(role === "admin" ? [
+                    { id: "fleet", label: "Fleet & Buses" },
+                    { id: "drivers", label: "Drivers & Schedules" }
+                  ] : []),
+                  { id: "deadlock", label: "Deadlock Detector (OS)" },
+                  { id: "priority", label: "Priority Queue" }
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setCurrentTab(tab.id)}
+                    class={`px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                      currentTab === tab.id 
+                        ? "bg-orange-50 text-orange-600 border border-orange-200" 
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    }`}>
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </header>
+
+          {/* MAIN CONTAINER */}
+          <main class="flex-1 max-w-7xl w-full mx-auto p-5 md:p-8 bg-white">
+            {loading ? (
+              <div class="text-center py-24">
+                <div class="inline-block animate-spin text-4xl mb-3 text-orange-500">⏳</div>
+                <p class="text-orange-600 font-bold text-base">Getting everything ready for you...</p>
+                <p class="text-xs text-slate-400 mt-1">Connecting to the database</p>
+              </div>
+            ) : (
+              <div>
+                {currentTab === "dashboard" && <DashboardView vehicles={vehicles} drivers={drivers} routes={routes} schedules={schedules} requests={requests} bookings={bookings} onTabChange={setCurrentTab} />}
+                {currentTab === "booking" && <BookingView routes={routes} requests={requests} bookings={bookings} onRefresh={loadAllData} showToast={showToast} />}
+                {currentTab === "routes_map" && <CampusCityView routes={routes} vehicles={vehicles} onTabChange={setCurrentTab} />}
+                {currentTab === "fleet" && <FleetView vehicles={vehicles} onRefresh={loadAllData} showToast={showToast} />}
+                {currentTab === "drivers" && <DriversView drivers={drivers} schedules={schedules} routes={routes} vehicles={vehicles} bookings={bookings} onRefresh={loadAllData} showToast={showToast} />}
+                {currentTab === "deadlock" && <DeadlockView deadlockState={deadlockState} running={deadlockRunning} onRun={runDeadlockDetection} />}
+                {currentTab === "priority" && <PriorityView queueData={priorityQueue} onFetch={fetchPriorityQueue} onRefresh={loadAllData} showToast={showToast} />}
+              </div>
+            )}
+          </main>
+
+          {/* FRIENDLY WHITE FOOTER */}
+          <footer class="bg-white border-t border-slate-100 py-6 mt-12 text-xs text-center text-slate-500">
+            <div class="max-w-7xl mx-auto px-5 flex flex-col md:flex-row items-center justify-between gap-3">
+              <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                <span class="font-bold text-slate-700">CampusMove Transit is Active</span>
+                <span class="text-slate-400">• Database Connected</span>
+              </div>
+              <p class="font-medium text-slate-500">
+                Created with care by <span class="text-orange-600 font-bold">Team Movers</span> for DBMS (TCS 503) & OS (TCS 502)
+              </p>
+            </div>
+          </footer>
+        </div>
+      );
+    }
+
+    // 1. DASHBOARD VIEW (HUMANIZED WHITE + ORANGE)
+    function DashboardView({ vehicles, drivers, routes, schedules, requests, bookings, onTabChange }) {
+      const availableVehicles = vehicles.filter(v => v.availability_status === 'available').length;
+      const availableDrivers = drivers.filter(d => d.availability_status === 'available').length;
+
+      return (
+        <div class="space-y-8 bg-white">
+          {/* WARM WELCOME BANNER */}
+          <div class="bg-orange-50 border border-orange-100 p-8 rounded-3xl flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+            <div>
+              <span class="px-3 py-1 bg-orange-100 text-orange-700 rounded-full text-xs font-bold uppercase tracking-wider inline-block">
+                👋 Hello, Welcome Back
+              </span>
+              <h2 class="text-3xl font-black text-orange-600 mt-2.5 tracking-tight">
+                Campus transit, made friendly and hassle-free.
+              </h2>
+              <p class="text-sm text-slate-600 mt-2 max-w-2xl leading-relaxed">
+                Check active bus schedules, submit your daily or emergency travel requests, and let our priority algorithm make sure you get to class or meetings on time.
+              </p>
+            </div>
+            <div class="flex flex-wrap gap-3">
+              <button 
+                onClick={() => onTabChange("booking")} 
+                class="px-5 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-2xl text-xs font-bold shadow-md shadow-orange-500/20 transition transform hover:-translate-y-0.5">
+                + Request a Ride
+              </button>
+              <button 
+                onClick={() => onTabChange("deadlock")} 
+                class="px-5 py-3 bg-white hover:bg-orange-100 text-orange-700 border border-orange-200 rounded-2xl text-xs font-bold transition">
+                ⚡ Try Deadlock Demo
+              </button>
+            </div>
+          </div>
+
+          {/* STATS TILES (CLEAN WHITE WITH ORANGE HEADINGS) */}
+          <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            {[
+              { label: "Buses & Vans", value: vehicles.length, sub: `${availableVehicles} Ready to go`, icon: "🚐" },
+              { label: "Campus Drivers", value: drivers.length, sub: `${availableDrivers} Active on duty`, icon: "👨‍✈️" },
+              { label: "Campus Routes", value: routes.length, sub: "Connectors", icon: "🗺️" },
+              { label: "Daily Trips", value: schedules.length, sub: "Timetable slots", icon: "⏱️" },
+              { label: "Waiting Rides", value: requests.filter(r => r.status === 'pending').length, sub: "In queue", icon: "📋" },
+              { label: "Booked Seats", value: bookings.length, sub: "Confirmed", icon: "🎟️" },
+            ].map((card, i) => (
+              <div key={i} class="bg-white p-5 rounded-2xl border border-slate-100 hover:border-orange-200 shadow-sm transition">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-slate-400 uppercase">{card.label}</span>
+                  <span class="text-lg">{card.icon}</span>
+                </div>
+                <p class="text-2xl font-black text-orange-600 mt-2">{card.value}</p>
+                <span class="inline-block mt-2 text-[11px] font-semibold text-slate-500 bg-slate-50 px-2 py-0.5 rounded-lg">
+                  {card.sub}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* TWO MAIN SECTIONS */}
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Live Schedules */}
+            <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+              <div class="flex items-center justify-between mb-5">
+                <h3 class="font-black text-orange-600 text-lg flex items-center gap-2">
+                  <span>🚍</span> Today's Bus Schedule
+                </h3>
+                <span class="text-xs text-orange-600 font-bold hover:underline cursor-pointer" onClick={() => onTabChange("drivers")}>
+                  See all schedules →
+                </span>
+              </div>
+              <div class="divide-y divide-slate-100">
+                {schedules.slice(0, 4).map(s => (
+                  <div key={s.schedule_id} class="py-3.5 flex items-center justify-between hover:bg-orange-50/30 px-2 rounded-xl transition">
+                    <div>
+                      <p class="font-bold text-slate-800 text-sm">{s.route_name || `Route #${s.route_id}`}</p>
+                      <p class="text-xs text-slate-400 mt-0.5">
+                        {s.origin} ➔ {s.destination} • {s.vehicle_model || s.registration_number}
+                      </p>
+                    </div>
+                    <div class="text-right">
+                      <span class="text-xs font-black text-orange-600 bg-orange-50 border border-orange-200 px-3 py-1 rounded-xl inline-block">
+                        {s.departure_time}
+                      </span>
+                      <p class="text-[11px] text-slate-400 mt-1">{s.time_window}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Pending Requests */}
+            <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+              <div class="flex items-center justify-between mb-5">
+                <h3 class="font-black text-orange-600 text-lg flex items-center gap-2">
+                  <span>🙋‍♂️</span> Student Ride Requests
+                </h3>
+                <span class="text-xs text-orange-600 font-bold hover:underline cursor-pointer" onClick={() => onTabChange("booking")}>
+                  Manage rides →
+                </span>
+              </div>
+              <div class="divide-y divide-slate-100">
+                {requests.length === 0 ? (
+                  <div class="py-8 text-center text-xs text-slate-400">
+                    No active student ride requests in the queue.
+                  </div>
+                ) : (
+                  requests.slice(0, 4).map(r => (
+                    <div key={r.request_id} class="py-3.5 flex items-center justify-between hover:bg-orange-50/30 px-2 rounded-xl transition">
+                      <div>
+                        <div class="flex items-center gap-2">
+                          <span class={`text-[10px] px-2 py-0.5 rounded-lg font-black ${
+                            r.priority === 'P1' ? 'bg-red-500 text-white' :
+                            r.priority === 'P2' ? 'bg-amber-400 text-slate-900' :
+                            'bg-orange-100 text-orange-700'
+                          }`}>
+                            {r.priority === 'P1' ? 'Emergency' : r.priority === 'P2' ? 'Faculty' : 'Routine'}
+                          </span>
+                          <p class="font-bold text-slate-800 text-sm">{r.student_name || `Student #${r.student_id}`}</p>
+                        </div>
+                        <p class="text-xs text-slate-500 mt-1 truncate max-w-xs">{r.purpose}</p>
+                      </div>
+                      <div class="text-right">
+                        <span class={`text-xs px-2.5 py-1 rounded-full font-bold ${
+                          r.status === 'allocated' 
+                            ? 'bg-emerald-100 text-emerald-800' 
+                            : 'bg-orange-100 text-orange-800'
+                        }`}>
+                          {r.status === 'allocated' ? 'Assigned' : 'In Queue'}
+                        </span>
+                        <p class="text-[11px] text-slate-400 mt-1">{r.requested_time}</p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 2. BOOKING VIEW (HUMANIZED)
+    function BookingView({ routes, requests, bookings, onRefresh, showToast }) {
+      const [routeId, setRouteId] = useState(routes[0]?.route_id || 1);
+      const [priority, setPriority] = useState("P3");
+      const [purpose, setPurpose] = useState("");
+      const [time, setTime] = useState("09:00:00");
+      const [submitting, setSubmitting] = useState(false);
+
+      const handleCancelBooking = async (bookingId) => {
+        if (!window.confirm("Are you sure you want to cancel this ride booking?")) return;
+        try {
+          const res = await fetch(`${API_BASE}/bookings/${bookingId}/cancel`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" }
+          });
+          const json = await res.json();
+          if (res.ok) {
+            showToast("Your ride has been cancelled successfully.");
+            onRefresh();
+          } else {
+            showToast(json.error?.message || "Could not cancel booking.", "error");
+          }
+        } catch (err) {
+          showToast("Network error cancelling booking.", "error");
+        }
+      };
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!purpose) {
+          showToast("Please tell us what the ride is for!", "error");
+          return;
+        }
+
+        setSubmitting(true);
+        try {
+          const res = await fetch(`${API_BASE}/requests`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              student_id: 4, // Rohan Verma (Test Student)
+              route_id: parseInt(routeId),
+              requested_time: time,
+              priority: priority,
+              purpose: purpose
+            })
+          });
+          const json = await res.json();
+          if (res.ok) {
+            showToast("Your ride request was submitted successfully!");
+            setPurpose("");
+            onRefresh();
+          } else {
+            showToast(json.error?.message || "Could not submit request", "error");
+          }
+        } catch (err) {
+          showToast("Connection error submitting request", "error");
+        }
+        setSubmitting(false);
+      };
+
+      return (
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 bg-white">
+          {/* SIMPLE FRIENDLY FORM */}
+          <div class="bg-white p-7 rounded-3xl border border-slate-100 shadow-sm lg:col-span-1">
+            <h3 class="font-black text-xl text-orange-600 mb-1">
+              Need a Ride? Let's Book It
+            </h3>
+            <p class="text-xs text-slate-500 mb-6 leading-relaxed">
+              Fill in your travel details below. We prioritize rides based on urgency (medical & exams first) and booking time.
+            </p>
+
+            <form onSubmit={handleSubmit} class="space-y-4">
+              <div>
+                <label class="block text-xs font-bold text-slate-700 uppercase mb-1.5">Where are you going?</label>
+                <select 
+                  value={routeId} 
+                  onChange={e => setRouteId(e.target.value)} 
+                  class="w-full text-xs font-semibold p-3.5 rounded-2xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-orange-500 focus:border-transparent transition">
+                  {routes.map(r => (
+                    <option key={r.route_id} value={r.route_id}>
+                      {r.route_name} ({r.distance_km} km • ~{r.estimated_duration_mins} min)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-slate-700 uppercase mb-1.5">How urgent is this trip?</label>
+                <div class="grid grid-cols-3 gap-2">
+                  {[
+                    { id: "P1", label: "P1: Emergency", desc: "Medical / Urgent", color: "bg-red-500 text-white" },
+                    { id: "P2", label: "P2: Official", desc: "Faculty / Duty", color: "bg-amber-500 text-white" },
+                    { id: "P3", label: "P3: Routine", desc: "Regular Class", color: "bg-orange-500 text-white" }
+                  ].map(p => (
+                    <button
+                      type="button"
+                      key={p.id}
+                      onClick={() => setPriority(p.id)}
+                      class={`p-3 rounded-2xl border text-left transition-all ${
+                        priority === p.id 
+                          ? `${p.color} border-transparent shadow-md font-bold scale-105` 
+                          : 'border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700'
+                      }`}>
+                      <p class="text-xs font-black">{p.id}</p>
+                      <p class="text-[10px] leading-tight mt-0.5 opacity-90">{p.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-slate-700 uppercase mb-1.5">Pickup Time</label>
+                <input 
+                  type="time" 
+                  value={time.substring(0, 5)} 
+                  onChange={e => setTime(e.target.value + ":00")} 
+                  class="w-full text-xs font-bold p-3.5 rounded-2xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-orange-500 transition"
+                />
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-slate-700 uppercase mb-1.5">What is the purpose?</label>
+                <textarea 
+                  rows="3" 
+                  placeholder="e.g., Going for 9 AM DBMS lab test in GEU Main Block"
+                  value={purpose} 
+                  onChange={e => setPurpose(e.target.value)} 
+                  class="w-full text-xs font-medium p-3.5 rounded-2xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-orange-500 transition"
+                />
+              </div>
+
+              <button 
+                type="submit" 
+                disabled={submitting}
+                class="w-full py-3.5 bg-orange-500 hover:bg-orange-600 text-white rounded-2xl text-xs font-black shadow-md shadow-orange-500/25 transition disabled:opacity-50">
+                {submitting ? "Booking..." : "Submit Travel Request"}
+              </button>
+            </form>
+          </div>
+
+          {/* REQUESTS & CONFIRMED SEATS */}
+          <div class="lg:col-span-2 space-y-8">
+            <div class="bg-white p-7 rounded-3xl border border-slate-100 shadow-sm">
+              <h3 class="font-black text-lg text-orange-600 mb-4 flex items-center gap-2">
+                <span>📋</span> All Current Requests
+              </h3>
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                  <thead class="bg-slate-50 text-slate-500 uppercase font-bold border-b">
+                    <tr>
+                      <th class="py-3 px-3">Req ID</th>
+                      <th class="py-3 px-3">Student Name</th>
+                      <th class="py-3 px-3">Urgency</th>
+                      <th class="py-3 px-3">Purpose</th>
+                      <th class="py-3 px-3">Time</th>
+                      <th class="py-3 px-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100">
+                    {requests.length === 0 ? (
+                      <tr>
+                        <td colspan="6" class="py-8 text-center text-slate-400 font-semibold">
+                          No pending ride requests. Fill out the form to request a ride!
+                        </td>
+                      </tr>
+                    ) : (
+                      requests.map(r => (
+                        <tr key={r.request_id} class="hover:bg-slate-50">
+                          <td class="py-3 px-3 font-mono font-bold text-slate-600">#{r.request_id}</td>
+                          <td class="py-3 px-3 font-bold text-slate-800">{r.student_name}</td>
+                          <td class="py-3 px-3">
+                            <span class={`px-2 py-0.5 rounded-md font-extrabold text-[10px] ${
+                              r.priority === 'P1' ? 'bg-red-500 text-white' :
+                              r.priority === 'P2' ? 'bg-amber-400 text-slate-900' : 'bg-orange-100 text-orange-700'
+                            }`}>
+                              {r.priority}
+                            </span>
+                          </td>
+                          <td class="py-3 px-3 text-slate-600 max-w-xs truncate">{r.purpose}</td>
+                          <td class="py-3 px-3 text-slate-500 font-mono">{r.requested_time}</td>
+                          <td class="py-3 px-3">
+                            <span class={`px-2.5 py-1 rounded-full font-bold text-[11px] ${
+                              r.status === 'allocated' 
+                                ? 'bg-emerald-100 text-emerald-800' 
+                                : 'bg-orange-100 text-orange-800'
+                            }`}>
+                              {r.status === 'allocated' ? 'Assigned' : 'Waiting'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="bg-white p-7 rounded-3xl border border-slate-100 shadow-sm">
+              <h3 class="font-black text-lg text-orange-600 mb-4 flex items-center gap-2">
+                <span>🎟️</span> Confirmed Ride Bookings
+              </h3>
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                  <thead class="bg-slate-50 text-slate-500 uppercase font-bold border-b">
+                    <tr>
+                      <th class="py-3 px-3">Ticket</th>
+                      <th class="py-3 px-3">Passenger</th>
+                      <th class="py-3 px-3">Route</th>
+                      <th class="py-3 px-3">Seat Number</th>
+                      <th class="py-3 px-3">Date</th>
+                      <th class="py-3 px-3">Status</th>
+                      <th class="py-3 px-3">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100">
+                    {bookings.length === 0 ? (
+                      <tr>
+                        <td colspan="7" class="py-8 text-center text-slate-400 font-semibold">
+                          🎉 No active or past bookings. New confirmed tickets will appear here!
+                        </td>
+                      </tr>
+                    ) : (
+                      bookings.map(b => (
+                        <tr key={b.booking_id} class="hover:bg-slate-50">
+                          <td class="py-3 px-3 font-mono font-black text-orange-600">BK-{b.booking_id}</td>
+                          <td class="py-3 px-3 font-bold text-slate-800">{b.student_name}</td>
+                          <td class="py-3 px-3 text-slate-600">{b.route_name}</td>
+                          <td class="py-3 px-3 font-bold text-emerald-700">
+                            {b.seat_no ? `Seat #${b.seat_no}` : 'Auto-Assigned'}
+                          </td>
+                          <td class="py-3 px-3 text-slate-500">{b.requested_date}</td>
+                          <td class="py-3 px-3">
+                            <span class={`px-2.5 py-1 rounded-full font-bold text-[10px] ${
+                              b.status === 'confirmed'  ? 'bg-emerald-100 text-emerald-800' :
+                              b.status === 'completed'  ? 'bg-blue-100 text-blue-800' :
+                              b.status === 'cancelled'  ? 'bg-rose-100 text-rose-700' :
+                              'bg-orange-100 text-orange-800'
+                            }`}>
+                              {b.status}
+                            </span>
+                          </td>
+                          <td class="py-3 px-3">
+                            {(b.status !== 'cancelled' && b.status !== 'completed') && (
+                              <button
+                                onClick={() => handleCancelBooking(b.booking_id)}
+                                class="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-xl text-[11px] font-bold transition"
+                              >
+                                ✕ Cancel Ride
+                              </button>
+                            )}
+                            {b.status === 'cancelled' && (
+                              <span class="text-[10px] text-slate-400 font-semibold italic">Cancelled</span>
+                            )}
+                            {b.status === 'completed' && (
+                              <span class="text-[10px] text-blue-500 font-semibold italic">✓ Done</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 3. FLEET VIEW (HUMANIZED)
+    function FleetView({ vehicles, onRefresh, showToast }) {
+      const [regNo, setRegNo] = useState("");
+      const [model, setModel] = useState("");
+      const [capacity, setCapacity] = useState(20);
+      const [creating, setCreating] = useState(false);
+
+      const handleAddVehicle = async (e) => {
+        e.preventDefault();
+        setCreating(true);
+        try {
+          const res = await fetch(`${API_BASE}/vehicles`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              registration_number: regNo,
+              model: model,
+              capacity: parseInt(capacity),
+              availability_status: "available",
+              maintenance_status: "good"
+            })
+          });
+          const json = await res.json();
+          if (res.ok) {
+            showToast("Vehicle registered successfully!");
+            setRegNo("");
+            setModel("");
+            onRefresh();
+          } else {
+            showToast(json.error?.message || "Failed to add vehicle", "error");
+          }
+        } catch (err) {
+          showToast("Network error registering vehicle", "error");
+        }
+        setCreating(false);
+      };
+
+      const handleStatusToggle = async (v) => {
+        const nextStatus = v.availability_status === 'available' ? 'maintenance' : 'available';
+        await fetch(`${API_BASE}/vehicles/${v.vehicle_id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ availability_status: nextStatus })
+        });
+        showToast(`Vehicle ${v.registration_number} marked as ${nextStatus}`);
+        onRefresh();
+      };
+
+      return (
+        <div class="space-y-8 bg-white">
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* REGISTER VEHICLE */}
+            <div class="bg-white p-7 rounded-3xl border border-slate-100 shadow-sm lg:col-span-1">
+              <h3 class="font-black text-xl text-orange-600 mb-1">Add a New Vehicle</h3>
+              <p class="text-xs text-slate-500 mb-5 leading-relaxed">Add a campus bus, shuttle, or emergency van to the fleet database.</p>
+              <form onSubmit={handleAddVehicle} class="space-y-4">
+                <div>
+                  <label class="block text-xs font-bold text-slate-700 mb-1">Number Plate</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. UK-07-CM-1006" 
+                    value={regNo} 
+                    onChange={e => setRegNo(e.target.value)} 
+                    required 
+                    class="w-full text-xs font-bold p-3.5 rounded-2xl border border-slate-200 uppercase font-mono bg-slate-50 focus:bg-white focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-slate-700 mb-1">Make and Model</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. Tata Starbus 32-Seater" 
+                    value={model} 
+                    onChange={e => setModel(e.target.value)} 
+                    required 
+                    class="w-full text-xs font-medium p-3.5 rounded-2xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-slate-700 mb-1">Available Passenger Seats</label>
+                  <input 
+                    type="number" 
+                    min="1" 
+                    max="100" 
+                    value={capacity} 
+                    onChange={e => setCapacity(e.target.value)} 
+                    required 
+                    class="w-full text-xs font-bold p-3.5 rounded-2xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+                <button 
+                  type="submit" 
+                  disabled={creating} 
+                  class="w-full py-3.5 bg-orange-500 hover:bg-orange-600 text-white rounded-2xl text-xs font-black shadow-md shadow-orange-500/25 transition">
+                  {creating ? "Adding to Fleet..." : "+ Add Vehicle to Fleet"}
+                </button>
+              </form>
+            </div>
+
+            {/* VEHICLES TABLE */}
+            <div class="bg-white p-7 rounded-3xl border border-slate-100 shadow-sm lg:col-span-2">
+              <h3 class="font-black text-xl text-orange-600 mb-4">Current Campus Fleet</h3>
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                  <thead class="bg-slate-50 text-slate-500 uppercase font-bold border-b">
+                    <tr>
+                      <th class="py-3 px-3">Registration</th>
+                      <th class="py-3 px-3">Model</th>
+                      <th class="py-3 px-3">Capacity</th>
+                      <th class="py-3 px-3">Owner</th>
+                      <th class="py-3 px-3">Availability</th>
+                      <th class="py-3 px-3">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100">
+                    {vehicles.map(v => (
+                      <tr key={v.vehicle_id} class="hover:bg-slate-50">
+                        <td class="py-3 px-3 font-mono font-bold text-orange-600">{v.registration_number}</td>
+                        <td class="py-3 px-3 font-bold text-slate-800">{v.model}</td>
+                        <td class="py-3 px-3 font-bold text-slate-600">{v.capacity} seats</td>
+                        <td class="py-3 px-3 uppercase text-[10px] font-extrabold text-slate-400">{v.owner_type}</td>
+                        <td class="py-3 px-3">
+                          <span class={`px-2.5 py-1 rounded-full font-bold text-[10px] ${
+                            v.availability_status === 'available' ? 'bg-emerald-100 text-emerald-800' :
+                            v.availability_status === 'in_use' ? 'bg-blue-100 text-blue-800' : 
+                            'bg-rose-100 text-rose-800'
+                          }`}>
+                            {v.availability_status}
+                          </span>
+                        </td>
+                        <td class="py-3 px-3">
+                          <button 
+                            onClick={() => handleStatusToggle(v)} 
+                            class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-orange-50 hover:text-orange-600 text-slate-700 font-bold text-[11px] transition">
+                            Change Status
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 4. DRIVERS & SCHEDULES VIEW (HUMANIZED) — ADMIN PANEL
+    function DriversView({ drivers, schedules, routes, vehicles, bookings, onRefresh, showToast }) {
+      const [completing, setCompleting] = useState(null);
+      const [driverName, setDriverName] = useState("");
+      const [driverPhone, setDriverPhone] = useState("");
+      const [licenseNumber, setLicenseNumber] = useState("");
+      const [driverStatus, setDriverStatus] = useState("available");
+      const [addingDriver, setAddingDriver] = useState(false);
+
+      const handleAddDriver = async (e) => {
+        e.preventDefault();
+        if (!driverName || !driverPhone || !licenseNumber) {
+          showToast("Please fill all required fields: name, phone, and license number", "error");
+          return;
+        }
+        setAddingDriver(true);
+        try {
+          const res = await fetch(`${API_BASE}/drivers`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: driverName.trim(),
+              phone: driverPhone.trim(),
+              license_number: licenseNumber.trim().toUpperCase(),
+              availability_status: driverStatus
+            })
+          });
+          const json = await res.json();
+          if (res.ok) {
+            showToast(`Driver ${driverName} registered successfully! 👨‍✈️`);
+            setDriverName("");
+            setDriverPhone("");
+            setLicenseNumber("");
+            setDriverStatus("available");
+            onRefresh();
+          } else {
+            showToast(json.error?.message || "Failed to add driver", "error");
+          }
+        } catch (err) {
+          showToast("Network error registering driver", "error");
+        }
+        setAddingDriver(false);
+      };
+
+      const handleToggleDriverStatus = async (driver) => {
+        const nextStatus = driver.availability_status === 'available' ? 'off_duty' :
+                           driver.availability_status === 'off_duty' ? 'available' : 'available';
+        try {
+          const res = await fetch(`${API_BASE}/drivers/${driver.driver_id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ availability_status: nextStatus })
+          });
+          const json = await res.json();
+          if (res.ok) {
+            showToast(`Driver ${driver.name} is now ${nextStatus.replace('_', ' ')}.`);
+            onRefresh();
+          } else {
+            showToast(json.error?.message || "Could not update status", "error");
+          }
+        } catch (err) {
+          showToast("Network error updating driver status", "error");
+        }
+      };
+
+      const handleDeleteDriver = async (driver) => {
+        if (!window.confirm(`Are you sure you want to remove driver ${driver.name}?`)) return;
+        try {
+          const res = await fetch(`${API_BASE}/drivers/${driver.driver_id}`, {
+            method: "DELETE"
+          });
+          const json = await res.json();
+          if (res.ok) {
+            showToast(`Driver ${driver.name} removed successfully.`);
+            onRefresh();
+          } else {
+            showToast(json.error?.message || "Cannot delete driver (active schedules might be assigned).", "error");
+          }
+        } catch (err) {
+          showToast("Network error deleting driver", "error");
+        }
+      };
+
+      const handleCompleteBooking = async (bookingId) => {
+        if (!window.confirm("Mark this ride as completed? This confirms the trip is finished.")) return;
+        setCompleting(bookingId);
+        try {
+          const res = await fetch(`${API_BASE}/bookings/${bookingId}/complete`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" }
+          });
+          const json = await res.json();
+          if (res.ok) {
+            showToast(`Ride BK-${bookingId} marked as completed! ✓`);
+            onRefresh();
+          } else {
+            showToast(json.error?.message || "Could not complete this ride.", "error");
+          }
+        } catch (err) {
+          showToast("Network error completing ride.", "error");
+        }
+        setCompleting(null);
+      };
+
+      const activeBookings = bookings.filter(b => b.status !== 'cancelled');
+
+      return (
+        <div class="space-y-8 bg-white">
+          {/* SECTION 1: ADD DRIVER & DRIVER LIST */}
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* REGISTER DRIVER FORM */}
+            <div class="bg-white p-7 rounded-3xl border border-slate-100 shadow-sm lg:col-span-1">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="text-xl">👨‍✈️</span>
+                <h3 class="font-black text-xl text-orange-600">Register New Driver</h3>
+              </div>
+              <p class="text-xs text-slate-500 mb-5 leading-relaxed">
+                Add a newly hired campus driver to the transit operations roster.
+              </p>
+
+              <form onSubmit={handleAddDriver} class="space-y-4">
+                <div>
+                  <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Driver Full Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Narendra Bisht"
+                    value={driverName}
+                    onChange={e => setDriverName(e.target.value)}
+                    required
+                    class="w-full text-xs font-bold p-3.5 rounded-2xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-orange-500 transition"
+                  />
+                </div>
+
+                <div>
+                  <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Phone Number</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. +91-9876543220"
+                    value={driverPhone}
+                    onChange={e => setDriverPhone(e.target.value)}
+                    required
+                    class="w-full text-xs font-bold p-3.5 rounded-2xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-orange-500 font-mono transition"
+                  />
+                </div>
+
+                <div>
+                  <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Commercial License Number</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. DL-UK07-2023-09876"
+                    value={licenseNumber}
+                    onChange={e => setLicenseNumber(e.target.value)}
+                    required
+                    class="w-full text-xs font-bold p-3.5 rounded-2xl border border-slate-200 uppercase bg-slate-50 focus:bg-white focus:ring-2 focus:ring-orange-500 font-mono transition"
+                  />
+                </div>
+
+                <div>
+                  <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Initial Availability Status</label>
+                  <select
+                    value={driverStatus}
+                    onChange={e => setDriverStatus(e.target.value)}
+                    class="w-full text-xs font-bold p-3.5 rounded-2xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-orange-500 transition">
+                    <option value="available">Available (On Duty)</option>
+                    <option value="on_trip">On Active Trip</option>
+                    <option value="off_duty">Off Duty / Rest</option>
+                  </select>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={addingDriver}
+                  class="w-full py-3.5 bg-orange-500 hover:bg-orange-600 text-white rounded-2xl text-xs font-black shadow-md shadow-orange-500/25 transition disabled:opacity-50">
+                  {addingDriver ? "Registering..." : "+ Add Driver to Fleet"}
+                </button>
+              </form>
+            </div>
+
+            {/* DRIVERS ROSTER LIST */}
+            <div class="bg-white p-7 rounded-3xl border border-slate-100 shadow-sm lg:col-span-2">
+              <div class="flex items-center justify-between mb-4">
+                <div>
+                  <h3 class="font-black text-xl text-orange-600 flex items-center gap-2">
+                    <span>👨‍✈️</span> Campus Bus Drivers Roster
+                  </h3>
+                  <p class="text-xs text-slate-500 mt-0.5">
+                    Hired drivers assigned to Graphic Era buses, mini-buses, and shuttles.
+                  </p>
+                </div>
+                <span class="text-xs bg-slate-100 text-slate-700 font-bold px-3 py-1 rounded-xl">
+                  {drivers.length} Drivers
+                </span>
+              </div>
+
+              <div class="space-y-3">
+                {drivers.map(d => (
+                  <div key={d.driver_id} class="p-4 bg-slate-50 hover:bg-orange-50/30 rounded-2xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition">
+                    <div>
+                      <div class="flex items-center gap-2">
+                        <p class="font-black text-sm text-slate-800">{d.name}</p>
+                        <span class="text-[10px] text-slate-400 font-mono">#{d.driver_id}</span>
+                      </div>
+                      <p class="text-xs text-slate-500 font-mono mt-0.5">
+                        License: <strong class="text-slate-700">{d.license_number}</strong> • Phone: <strong class="text-slate-700">{d.phone}</strong>
+                      </p>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                      <span class={`text-xs px-3 py-1 rounded-full font-bold ${
+                        d.availability_status === 'available' ? 'bg-emerald-100 text-emerald-800' :
+                        d.availability_status === 'on_trip' ? 'bg-blue-100 text-blue-800' : 
+                        'bg-slate-200 text-slate-700'
+                      }`}>
+                        {d.availability_status === 'available' ? 'Available' :
+                         d.availability_status === 'on_trip' ? 'On Trip' : 'Off Duty'}
+                      </span>
+                      <button
+                        onClick={() => handleToggleDriverStatus(d)}
+                        class="px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-orange-50 hover:text-orange-600 text-slate-700 font-bold text-[11px] shadow-sm transition">
+                        Change Status
+                      </button>
+                      <button
+                        onClick={() => handleDeleteDriver(d)}
+                        title="Remove driver"
+                        class="px-2.5 py-1.5 rounded-xl bg-white border border-rose-200 hover:bg-rose-50 text-rose-600 font-bold text-[11px] shadow-sm transition">
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* SECTION 2: SCHEDULES */}
+          <div class="bg-white p-7 rounded-3xl border border-slate-100 shadow-sm">
+            <h3 class="font-black text-xl text-orange-600 mb-4 flex items-center gap-2">
+              <span>📅</span> Route Schedules & Driver Assignments
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {schedules.map(s => (
+                <div key={s.schedule_id} class="p-4.5 bg-orange-50/50 rounded-2xl border border-orange-100 flex flex-col justify-between">
+                  <div>
+                    <div class="flex items-center justify-between mb-2">
+                      <span class="font-black text-slate-800 text-sm truncate">{s.route_name || `Route #${s.route_id}`}</span>
+                    </div>
+                    <span class="text-xs font-mono font-black bg-orange-500 text-white px-3 py-1 rounded-xl inline-block mb-3">
+                      {s.departure_time} - {s.arrival_time}
+                    </span>
+                    <div class="text-xs text-slate-600 space-y-1 font-medium">
+                      <p>🚌 <span class="font-bold text-slate-700">Vehicle:</span> {s.vehicle_model || s.registration_number}</p>
+                      <p>👨‍✈️ <span class="font-bold text-slate-700">Driver:</span> {s.driver_name}</p>
+                    </div>
+                  </div>
+                  <p class="text-[10px] text-slate-400 font-semibold mt-3 pt-2 border-t border-orange-100">{s.time_window}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ADMIN: COMPLETE RIDE MANAGEMENT */}
+          <div class="bg-white p-7 rounded-3xl border border-slate-100 shadow-sm">
+            <div class="flex items-center justify-between mb-5">
+              <div>
+                <h3 class="font-black text-xl text-orange-600 flex items-center gap-2">
+                  <span>✅</span> Ride Completion Management
+                </h3>
+                <p class="text-xs text-slate-500 mt-1">
+                  Mark rides as <span class="font-bold text-blue-600">Completed</span> once the bus has returned. Confirmed and pending bookings appear below.
+                </p>
+              </div>
+              <span class="text-xs bg-orange-50 text-orange-700 border border-orange-200 px-3 py-1.5 rounded-xl font-bold">
+                🛡️ Admin Only
+              </span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-slate-50 text-slate-500 uppercase font-bold border-b">
+                  <tr>
+                    <th class="py-3 px-3">Ticket</th>
+                    <th class="py-3 px-3">Passenger</th>
+                    <th class="py-3 px-3">Route</th>
+                    <th class="py-3 px-3">Seat</th>
+                    <th class="py-3 px-3">Date</th>
+                    <th class="py-3 px-3">Priority</th>
+                    <th class="py-3 px-3">Status</th>
+                    <th class="py-3 px-3">Admin Action</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  {activeBookings.length === 0 ? (
+                    <tr>
+                      <td colspan="8" class="py-10 text-center text-slate-400 font-semibold">
+                        🎉 All rides are complete or no bookings exist.
+                      </td>
+                    </tr>
+                  ) : (
+                    activeBookings.map(b => (
+                      <tr key={b.booking_id} class={`hover:bg-slate-50 ${b.status === 'completed' ? 'opacity-60' : ''}`}>
+                        <td class="py-3 px-3 font-mono font-black text-orange-600">BK-{b.booking_id}</td>
+                        <td class="py-3 px-3 font-bold text-slate-800">{b.student_name}</td>
+                        <td class="py-3 px-3 text-slate-600 max-w-[160px] truncate">{b.route_name}</td>
+                        <td class="py-3 px-3 font-bold text-emerald-700">
+                          {b.seat_no ? `#${b.seat_no}` : '—'}
+                        </td>
+                        <td class="py-3 px-3 text-slate-500">{b.requested_date}</td>
+                        <td class="py-3 px-3">
+                          <span class={`px-2 py-0.5 rounded-md font-extrabold text-[10px] ${
+                            b.priority_level === 'P1' ? 'bg-red-500 text-white' :
+                            b.priority_level === 'P2' ? 'bg-amber-400 text-slate-900' :
+                            'bg-orange-100 text-orange-800'
+                          }`}>
+                            {b.priority_level}
+                          </span>
+                        </td>
+                        <td class="py-3 px-3">
+                          <span class={`px-2.5 py-1 rounded-full font-bold text-[10px] ${
+                            b.status === 'confirmed'  ? 'bg-emerald-100 text-emerald-800' :
+                            b.status === 'completed'  ? 'bg-blue-100 text-blue-800' :
+                            'bg-orange-100 text-orange-800'
+                          }`}>
+                            {b.status}
+                          </span>
+                        </td>
+                        <td class="py-3 px-3">
+                          {b.status === 'completed' ? (
+                            <span class="text-[10px] text-blue-600 font-bold flex items-center gap-1">
+                              ✓ Ride Completed
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleCompleteBooking(b.booking_id)}
+                              disabled={completing === b.booking_id}
+                              class="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-[11px] font-bold transition disabled:opacity-50 whitespace-nowrap"
+                            >
+                              {completing === b.booking_id ? "Saving..." : "✓ Mark Complete"}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+
+    // 5. OS DEADLOCK DETECTOR (RAG) (HUMANIZED)
+    function DeadlockView({ deadlockState, running, onRun }) {
+      return (
+        <div class="bg-white p-7 md:p-8 rounded-3xl border border-slate-100 shadow-sm space-y-6">
+          <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-100 pb-5">
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="text-2xl">⚡</span>
+                <h2 class="text-2xl font-black text-orange-600">
+                  Deadlock Prevention & Detection Engine
+                </h2>
+              </div>
+              <p class="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
+                Operating Systems (TCS 502) Concept: When multiple rides compete for the same bus and driver in a circular loop, the system detects the deadlock with 3-color DFS and frees up the lower-priority ride.
+              </p>
+            </div>
+            <button
+              onClick={onRun}
+              disabled={running}
+              class="px-6 py-3.5 bg-orange-500 hover:bg-orange-600 text-white rounded-2xl text-xs font-black shadow-md shadow-orange-500/25 transition disabled:opacity-50">
+              {running ? "Checking for Circular Wait..." : "⚡ Run Deadlock Check"}
+            </button>
+          </div>
+
+          {/* PROPOSAL SCENARIO EXPLANATION */}
+          <div class="bg-orange-50/60 border border-orange-100 rounded-2xl p-5 text-xs text-slate-700">
+            <p class="font-black text-orange-700 mb-1">📖 The Scenario We Test (Page 3 of Proposal):</p>
+            <p class="leading-relaxed">
+              <strong>Route A (Routine Ride, Priority P3)</strong> has <strong>Vehicle V1</strong> but is waiting for <strong>Driver D1</strong>. At the exact same time, <strong>Route B (Emergency Ride, Priority P1)</strong> has <strong>Driver D1</strong> but is waiting for <strong>Vehicle V1</strong>. Because neither can proceed, they are stuck in a circular wait!
+            </p>
+          </div>
+
+          {/* VISUAL DIAGRAM TILES */}
+          <div class="p-6 md:p-8 bg-slate-50 rounded-3xl border border-slate-100">
+            <h4 class="text-xs font-bold uppercase text-slate-400 mb-4 tracking-wider">
+              Visual Resource Allocation Diagram:
+            </h4>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-center text-xs">
+              <div class="p-5 bg-white rounded-2xl border-2 border-orange-200 shadow-sm">
+                <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">Request</span>
+                <p class="font-black text-orange-600 text-base mt-2">Route A (P3)</p>
+                <p class="text-xs text-slate-500 mt-1">Holds: <strong>Vehicle V1</strong></p>
+                <p class="text-orange-500 font-bold font-mono mt-3 text-[11px] bg-orange-50 py-1 rounded-lg">Waiting for Driver D1 ➔</p>
+              </div>
+              <div class="p-5 bg-white rounded-2xl border-2 border-slate-200 shadow-sm">
+                <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">Resource</span>
+                <p class="font-black text-slate-800 text-base mt-2">Driver D1</p>
+                <p class="text-xs text-slate-500 mt-1">Assigned to: <strong>Route B</strong></p>
+                <p class="text-slate-400 font-bold font-mono mt-3 text-[11px] bg-slate-50 py-1 rounded-lg">Held by Route B ➔</p>
+              </div>
+              <div class="p-5 bg-white rounded-2xl border-2 border-red-200 shadow-sm">
+                <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-red-100 text-red-700">Request</span>
+                <p class="font-black text-red-600 text-base mt-2">Route B (P1 Emergency)</p>
+                <p class="text-xs text-slate-500 mt-1">Holds: <strong>Driver D1</strong></p>
+                <p class="text-red-500 font-bold font-mono mt-3 text-[11px] bg-red-50 py-1 rounded-lg">Waiting for Vehicle V1 ➔</p>
+              </div>
+              <div class="p-5 bg-white rounded-2xl border-2 border-slate-200 shadow-sm">
+                <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">Resource</span>
+                <p class="font-black text-slate-800 text-base mt-2">Vehicle V1</p>
+                <p class="text-xs text-slate-500 mt-1">Assigned to: <strong>Route A</strong></p>
+                <p class="text-slate-400 font-bold font-mono mt-3 text-[11px] bg-slate-50 py-1 rounded-lg">Loops back to Route A ➔</p>
+              </div>
+            </div>
+          </div>
+
+          {/* RESULTS */}
+          {deadlockState && (
+            <div class={`p-6 rounded-2xl border ${deadlockState.has_deadlock ? 'bg-orange-50 border-orange-200' : 'bg-emerald-50 border-emerald-200'}`}>
+              <div class="flex items-center gap-2">
+                <span class="text-2xl">{deadlockState.has_deadlock ? '🚨' : '✅'}</span>
+                <h3 class="font-black text-lg text-slate-800">
+                  {deadlockState.has_deadlock ? 'Circular Wait (Deadlock) Detected!' : 'All clear — No deadlock detected.'}
+                </h3>
+              </div>
+              
+              {deadlockState.cycle_path && (
+                <div class="mt-4 text-xs">
+                  <p class="font-bold text-slate-700 mb-1.5">Detected Cycle Path:</p>
+                  <p class="font-mono bg-white p-3 rounded-xl border border-orange-200 text-orange-700 font-black overflow-x-auto">
+                    {deadlockState.cycle_path.join(" ➔ ")}
+                  </p>
+                </div>
+              )}
+
+              {deadlockState.victim_to_preempt && (
+                <div class="mt-4 p-4 bg-white rounded-xl border border-slate-200 text-xs shadow-sm">
+                  <p class="font-black text-orange-700 mb-1 flex items-center gap-1.5">
+                    <span>💡</span> How CampusMove Resolves This:
+                  </p>
+                  <p class="text-slate-700 mt-1">
+                    The engine selected <span class="font-mono font-black text-orange-600 bg-orange-50 px-2 py-0.5 rounded">{deadlockState.victim_to_preempt.request_id}</span> (Priority {deadlockState.victim_to_preempt.priority_level}) to be re-queued.
+                  </p>
+                  <p class="text-slate-500 mt-1 leading-relaxed">
+                    This allows the medical emergency ride <span class="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">Req_B (P1)</span> to dispatch immediately without delay!
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // 6. PRIORITY QUEUE VIEW (HUMANIZED)
+    function PriorityView({ queueData, onFetch, onRefresh, showToast }) {
+      useEffect(() => {
+        onFetch();
+      }, []);
+
+      const allocateNext = async (req) => {
+        try {
+          const res = await fetch(`${API_BASE}/bookings`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              request_id: req.request_id,
+              student_id: req.student_id,
+              route_id: req.route_id,
+              purpose: req.purpose,
+              requested_date: new Date().toISOString().split("T")[0],
+              priority_level: req.priority_level,
+              schedule_id: 1,
+              seat_no: Math.floor(Math.random() * 25) + 1,
+              status: "confirmed"
+            })
+          });
+          if (res.ok) {
+            showToast(`Vehicle seat assigned for Request #${req.request_id}!`);
+            onFetch();
+            onRefresh();
+          } else {
+            showToast("Failed to assign vehicle", "error");
+          }
+        } catch (e) {
+          showToast("Network error allocating ride", "error");
+        }
+      };
+
+      return (
+        <div class="bg-white p-7 md:p-8 rounded-3xl border border-slate-100 shadow-sm space-y-6">
+          <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-100 pb-5">
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="text-2xl">⏱️</span>
+                <h2 class="text-2xl font-black text-orange-600">Priority Booking Queue</h2>
+              </div>
+              <p class="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
+                Rides are sorted automatically: 
+                <span class="font-bold text-red-600"> Medical Emergency (P1)</span> &gt; 
+                <span class="font-bold text-amber-600"> Official Faculty (P2)</span> &gt; 
+                <span class="font-bold text-orange-600"> Routine Commute (P3)</span>. Earlier requests get priority within the same level.
+              </p>
+            </div>
+            <button
+              onClick={onFetch}
+              class="px-5 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-2xl text-xs font-black shadow-md shadow-orange-500/20 transition">
+              🔄 Refresh Queue
+            </button>
+          </div>
+
+          {queueData && (
+            <div class="space-y-4">
+              <div class="flex items-center justify-between text-xs font-bold text-slate-500">
+                <span>Total Waiting in Queue: {queueData.total_pending}</span>
+                {queueData.next_to_allocate && (
+                  <span class="text-orange-700 bg-orange-50 px-3 py-1 rounded-xl border border-orange-200 font-black">
+                    Up Next: Request #{queueData.next_to_allocate.request_id} ({queueData.next_to_allocate.priority_level})
+                  </span>
+                )}
+              </div>
+
+              <div class="divide-y divide-slate-100 border border-slate-100 rounded-2xl overflow-hidden shadow-sm">
+                {queueData.queue.length === 0 ? (
+                  <div class="p-10 text-center text-xs text-slate-400">
+                    🎉 The queue is empty! All student ride requests have been fulfilled.
+                  </div>
+                ) : (
+                  queueData.queue.map((req, idx) => (
+                    <div key={req.request_id} class="p-4 flex items-center justify-between hover:bg-orange-50/20 transition">
+                      <div class="flex items-center gap-3">
+                        <span class="w-7 h-7 rounded-full bg-orange-100 text-orange-700 text-xs font-black flex items-center justify-center">
+                          {idx + 1}
+                        </span>
+                        <div>
+                          <div class="flex items-center gap-2">
+                            <span class={`text-[10px] px-2.5 py-0.5 rounded-md font-black ${
+                              req.priority_level === 'P1' ? 'bg-red-500 text-white' :
+                              req.priority_level === 'P2' ? 'bg-amber-400 text-slate-900' : 'bg-orange-100 text-orange-800'
+                            }`}>
+                              {req.priority_level}
+                            </span>
+                            <span class="font-black text-slate-800 text-sm">Req #{req.request_id}</span>
+                            <span class="text-xs text-slate-500">by {req.student_name}</span>
+                          </div>
+                          <p class="text-xs text-slate-500 mt-1">{req.purpose} • Requested for: {req.requested_time}</p>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => allocateNext(req)}
+                        class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition">
+                        Assign Seat
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // 6. CAMPUS & CITY LANDMARKS VIEW
+    function CampusCityView({ routes, vehicles, onTabChange }) {
+      const [filterCategory, setFilterCategory] = useState("all");
+      const [searchQuery, setSearchQuery] = useState("");
+
+      const campusZones = [
+        {
+          id: "hostels",
+          title: "5 Campus Hostels Zone",
+          subtitle: "South-West Residential End",
+          desc: "APJ Abdul Kalam, Subhash Chandra Bose, Sardar Patel, Marina Girls, and Sarojini Naidu Hostels.",
+          transit: "Electric Shuttles & Mini-Buses (every 10 min)",
+          icon: "🏨",
+          color: "border-orange-200 bg-orange-50/40 text-orange-700"
+        },
+        {
+          id: "academic",
+          title: "GEU Main Block",
+          subtitle: "Central Academic Hub",
+          desc: "Central academic complex housing B.Tech, Dean Offices, Central Library & Administration.",
+          transit: "Graphic Era Parking / Bus Stop",
+          icon: "🏛️",
+          color: "border-blue-200 bg-blue-50/40 text-blue-700"
+        },
+        {
+          id: "hill_campus",
+          title: "CSIT Campus",
+          subtitle: "Computer Science & IT Campus",
+          desc: "Dedicated Computer Science & Information Technology labs, AI/ML clusters, and software innovation centers.",
+          transit: "Inter-Campus High-Frequency Shuttles",
+          icon: "💻",
+          color: "border-emerald-200 bg-emerald-50/40 text-emerald-700"
+        },
+        {
+          id: "hospital",
+          title: "Graphic Era Hospital (GEIMS)",
+          subtitle: "Medical & Health Center",
+          desc: "Graphic Era Institute of Medical Sciences & Hospital with 24/7 student healthcare facilities.",
+          transit: "Dedicated Emergency Vans & Health Shuttles",
+          icon: "🏥",
+          color: "border-rose-200 bg-rose-50/40 text-rose-700"
+        }
+      ];
+
+      const filteredRoutes = routes.filter(r => {
+        const matchesSearch = !searchQuery || 
+          r.route_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          r.origin.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          r.destination.toLowerCase().includes(searchQuery.toLowerCase());
+        
+        if (!matchesSearch) return false;
+        if (filterCategory === "campus") return r.route_id <= 5;
+        if (filterCategory === "city") return r.route_id >= 6;
+        return true;
+      });
+
+      return (
+        <div class="space-y-8 bg-white">
+          {/* INTRO HERO BANNER */}
+          <div class="bg-gradient-to-r from-orange-50 via-amber-50 to-orange-50 border border-orange-200 p-8 rounded-3xl">
+            <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="px-3 py-1 bg-orange-100 text-orange-800 rounded-full text-xs font-black uppercase tracking-wider">
+                    📍 Dehradun, Uttarakhand
+                  </span>
+                  <span class="px-3 py-1 bg-white text-slate-700 border border-slate-200 rounded-full text-xs font-bold">
+                    Graphic Era Deemed to be University
+                  </span>
+                </div>
+                <h2 class="text-3xl font-black text-slate-800 mt-3 tracking-tight">
+                  Campus Transit & Dehradun City Network
+                </h2>
+                <p class="text-xs text-slate-600 mt-2 max-w-3xl leading-relaxed">
+                  Graphic Era's campus transit connects <strong>5 Hostels on one end</strong>, the <strong>GEU Main Block in the middle</strong>, the <strong>CSIT Campus</strong>, and <strong>Graphic Era Hospital</strong>, all linked via the central <strong>Graphic Era Parking / Bus Stop</strong> to every major landmark across Dehradun.
+                </p>
+              </div>
+              <button
+                onClick={() => onTabChange("booking")}
+                class="px-5 py-3.5 bg-orange-500 hover:bg-orange-600 text-white rounded-2xl text-xs font-black shadow-md shadow-orange-500/25 transition whitespace-nowrap">
+                + Book a Ride Now
+              </button>
+            </div>
+          </div>
+
+          {/* 4 CAMPUS ZONES */}
+          <div>
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-black text-xl text-slate-800 flex items-center gap-2">
+                <span>📍</span> University Campus Zones
+              </h3>
+              <span class="text-xs text-slate-400 font-semibold">4 Connected Hubs</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {campusZones.map(zone => (
+                <div key={zone.id} class={`p-5 rounded-3xl border ${zone.color} shadow-sm transition hover:shadow-md flex flex-col justify-between`}>
+                  <div>
+                    <div class="flex items-center justify-between mb-2">
+                      <span class="text-2xl">{zone.icon}</span>
+                      <span class="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg bg-white/80 border border-slate-200 text-slate-700">
+                        {zone.subtitle}
+                      </span>
+                    </div>
+                    <h4 class="font-black text-slate-800 text-sm mt-1">{zone.title}</h4>
+                    <p class="text-xs text-slate-600 mt-2 leading-relaxed">{zone.desc}</p>
+                  </div>
+                  <div class="mt-4 pt-3 border-t border-slate-200/60">
+                    <p class="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                      <span>🚌</span> {zone.transit}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* FLEET & DRIVERS CAPABILITY CARDS */}
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm lg:col-span-2">
+              <h4 class="font-black text-sm uppercase tracking-wider text-slate-400 mb-4">
+                College-Owned Vehicle Fleet
+              </h4>
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                <div class="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
+                  <span class="text-2xl">🚌</span>
+                  <p class="font-black text-slate-800 text-xs mt-1">Buses</p>
+                  <p class="text-[10px] text-slate-500">40-50 Seaters</p>
+                  <span class="inline-block mt-2 text-[10px] font-bold text-orange-700 bg-orange-100 px-2 py-0.5 rounded-full">City & Main Trips</span>
+                </div>
+                <div class="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
+                  <span class="text-2xl">🚐</span>
+                  <p class="font-black text-slate-800 text-xs mt-1">Mini-Buses</p>
+                  <p class="text-[10px] text-slate-500">20 Seater Force</p>
+                  <span class="inline-block mt-2 text-[10px] font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">Hill Campus Shuttle</span>
+                </div>
+                <div class="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
+                  <span class="text-2xl">⚡</span>
+                  <p class="font-black text-slate-800 text-xs mt-1">Electric Shuttles</p>
+                  <p class="text-[10px] text-slate-500">8 Seater Eco</p>
+                  <span class="inline-block mt-2 text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">Hostel ↔ Classes</span>
+                </div>
+                <div class="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
+                  <span class="text-2xl">🚑</span>
+                  <p class="font-black text-slate-800 text-xs mt-1">Vans & Ambulances</p>
+                  <p class="text-[10px] text-slate-500">10 Seater Mazda</p>
+                  <span class="inline-block mt-2 text-[10px] font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded-full">Hospital Medical</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+              <h4 class="font-black text-sm uppercase tracking-wider text-slate-400 mb-3">
+                Transit Operations
+              </h4>
+              <div class="space-y-2.5 text-xs text-slate-600">
+                <div class="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl">
+                  <span class="font-semibold">👨‍✈️ Hired Professional Drivers</span>
+                  <span class="font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg">5 Active</span>
+                </div>
+                <div class="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl">
+                  <span class="font-semibold">🛣️ Total Registered Routes</span>
+                  <span class="font-bold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-lg">{routes.length} Routes</span>
+                </div>
+                <div class="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl">
+                  <span class="font-semibold">🏥 Emergency Coverage</span>
+                  <span class="font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-lg">24/7 GEIMS</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* DEHRADUN CITY LANDMARKS & DISTANCES DIRECTORY */}
+          <div class="bg-white p-7 rounded-3xl border border-slate-100 shadow-sm">
+            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+              <div>
+                <h3 class="font-black text-xl text-orange-600 flex items-center gap-2">
+                  <span>🗺️</span> Dehradun City Landmarks & Campus Routes
+                </h3>
+                <p class="text-xs text-slate-500 mt-1">
+                  Official distances and estimated transit times from Graphic Era Deemed to be University (Clement Town base).
+                </p>
+              </div>
+
+              {/* FILTER BUTTONS & SEARCH */}
+              <div class="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Search landmark..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  class="text-xs p-2.5 px-3 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-orange-500 transition"
+                />
+                <div class="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
+                  <button
+                    onClick={() => setFilterCategory("all")}
+                    class={`px-3 py-1.5 rounded-lg transition ${filterCategory === 'all' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-600'}`}>
+                    All ({routes.length})
+                  </button>
+                  <button
+                    onClick={() => setFilterCategory("campus")}
+                    class={`px-3 py-1.5 rounded-lg transition ${filterCategory === 'campus' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-600'}`}>
+                    Campus Zones
+                  </button>
+                  <button
+                    onClick={() => setFilterCategory("city")}
+                    class={`px-3 py-1.5 rounded-lg transition ${filterCategory === 'city' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-600'}`}>
+                    City Landmarks
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-slate-50 text-slate-500 uppercase font-bold border-b">
+                  <tr>
+                    <th class="py-3 px-3">Route #</th>
+                    <th class="py-3 px-3">Route Name</th>
+                    <th class="py-3 px-3">Origin ➔ Destination</th>
+                    <th class="py-3 px-3">Distance</th>
+                    <th class="py-3 px-3">Travel Time</th>
+                    <th class="py-3 px-3">Primary Mode</th>
+                    <th class="py-3 px-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  {filteredRoutes.length === 0 ? (
+                    <tr>
+                      <td colspan="7" class="py-8 text-center text-slate-400">
+                        No routes match your search.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredRoutes.map(r => {
+                      const isCampus = r.route_id <= 5;
+                      const modeTag = r.route_id === 1 ? "Electric Shuttle / Bus" :
+                                      r.route_id === 2 ? "Mini-Bus Shuttle" :
+                                      r.route_id === 4 ? "Emergency Medical Van" :
+                                      r.route_id === 13 ? "Express Heavy Bus" :
+                                      r.route_id === 14 ? "Regular Campus Bus" :
+                                      isCampus ? "Campus Shuttle" : "City Transit Bus";
+
+                      return (
+                        <tr key={r.route_id} class="hover:bg-orange-50/20 transition">
+                          <td class="py-3.5 px-3 font-mono font-bold text-orange-600">
+                            #{r.route_id}
+                          </td>
+                          <td class="py-3.5 px-3">
+                            <span class="font-bold text-slate-800">{r.route_name}</span>
+                            <span className={`ml-2 text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                              isCampus ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-orange-50 text-orange-700 border border-orange-200'
+                            }`}>
+                              {isCampus ? "Campus" : "City"}
+                            </span>
+                          </td>
+                          <td class="py-3.5 px-3 text-slate-600">
+                            <span class="font-medium text-slate-800">{r.origin}</span>
+                            <span class="text-orange-500 mx-1.5 font-bold">➔</span>
+                            <span class="font-medium text-slate-800">{r.destination}</span>
+                          </td>
+                          <td class="py-3.5 px-3">
+                            <span class="font-black text-slate-700 bg-slate-100 px-2.5 py-1 rounded-xl">
+                              {r.distance_km} km
+                            </span>
+                          </td>
+                          <td class="py-3.5 px-3">
+                            <span class="font-bold text-slate-600">
+                              ~{r.estimated_duration_mins} mins
+                            </span>
+                          </td>
+                          <td class="py-3.5 px-3">
+                            <span class="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-lg">
+                              {modeTag}
+                            </span>
+                          </td>
+                          <td class="py-3.5 px-3 text-right">
+                            <button
+                              onClick={() => onTabChange("booking")}
+                              class="px-3 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 rounded-xl text-[11px] font-bold transition">
+                              Request Ride →
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
