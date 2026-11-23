@@ -37,8 +37,26 @@ class DriverModel:
 
     @classmethod
     def get_by_id(cls, driver_id: int):
-        """Retrieves a single driver by primary key."""
-        sql = "SELECT * FROM drivers WHERE driver_id = ?"
+        """Retrieves a single driver by primary key with assigned vehicle details."""
+        sql = """
+            SELECT d.*,
+                   v.vehicle_id, v.model AS assigned_vehicle, v.registration_number AS assigned_reg,
+                   v.vehicle_type, COALESCE(v.capacity, 40) AS capacity,
+                   r.route_id, r.route_name,
+                   COALESCE(bk.booked_count, 0) AS full_seats,
+                   MAX(0, COALESCE(v.capacity, 40) - COALESCE(bk.booked_count, 0)) AS available_seats
+            FROM drivers d
+            LEFT JOIN schedules s ON d.driver_id = s.driver_id
+            LEFT JOIN vehicles v ON s.vehicle_id = v.vehicle_id
+            LEFT JOIN routes r ON s.route_id = r.route_id
+            LEFT JOIN (
+                SELECT schedule_id, COUNT(*) AS booked_count
+                FROM bookings
+                WHERE status IN ('confirmed', 'pending')
+                GROUP BY schedule_id
+            ) bk ON s.schedule_id = bk.schedule_id
+            WHERE d.driver_id = ?
+        """
         return execute_query(sql, (driver_id,), fetch="one")
 
     @classmethod
@@ -49,13 +67,31 @@ class DriverModel:
 
     @classmethod
     def list_all(cls, availability_status: str = None):
-        """Lists drivers with optional status filtering."""
-        query = "SELECT * FROM drivers WHERE 1=1"
+        """Lists drivers with joined assigned vehicle and seat availability."""
+        query = """
+            SELECT d.*,
+                   v.vehicle_id, v.model AS assigned_vehicle, v.registration_number AS assigned_reg,
+                   v.vehicle_type, COALESCE(v.capacity, 40) AS capacity,
+                   r.route_id, r.route_name,
+                   COALESCE(bk.booked_count, 0) AS full_seats,
+                   MAX(0, COALESCE(v.capacity, 40) - COALESCE(bk.booked_count, 0)) AS available_seats
+            FROM drivers d
+            LEFT JOIN schedules s ON d.driver_id = s.driver_id
+            LEFT JOIN vehicles v ON s.vehicle_id = v.vehicle_id
+            LEFT JOIN routes r ON s.route_id = r.route_id
+            LEFT JOIN (
+                SELECT schedule_id, COUNT(*) AS booked_count
+                FROM bookings
+                WHERE status IN ('confirmed', 'pending')
+                GROUP BY schedule_id
+            ) bk ON s.schedule_id = bk.schedule_id
+            WHERE 1=1
+        """
         params = []
         if availability_status:
-            query += " AND availability_status = ?"
+            query += " AND d.availability_status = ?"
             params.append(availability_status)
-        query += " ORDER BY driver_id ASC"
+        query += " ORDER BY d.driver_id ASC"
         return execute_query(query, tuple(params), fetch="all")
 
     @classmethod
@@ -68,18 +104,16 @@ class DriverModel:
         availability = kwargs.get("availability_status", existing["availability_status"])
         cls.validate_attributes(availability)
 
-        allowed_fields = ["name", "phone", "license_number", "availability_status"]
+        allowed = ["name", "phone", "license_number", "availability_status"]
         updates = []
         params = []
         for key, value in kwargs.items():
-            if key in allowed_fields:
+            if key in allowed:
                 updates.append(f"{key} = ?")
                 if key == "license_number":
                     params.append(value.strip().upper())
-                elif isinstance(value, str):
-                    params.append(value.strip())
                 else:
-                    params.append(value)
+                    params.append(value.strip() if isinstance(value, str) else value)
 
         if not updates:
             return existing
@@ -91,7 +125,7 @@ class DriverModel:
 
     @classmethod
     def delete(cls, driver_id: int):
-        """Deletes a driver record by ID."""
+        """Deletes a driver record."""
         sql = "DELETE FROM drivers WHERE driver_id = ?"
         rows_affected = execute_query(sql, (driver_id,), fetch="none")
         return rows_affected > 0
