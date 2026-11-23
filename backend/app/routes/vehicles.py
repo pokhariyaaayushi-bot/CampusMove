@@ -12,11 +12,44 @@ vehicles_bp = Blueprint("vehicles", __name__, url_prefix="/api/vehicles")
 
 @vehicles_bp.route("", methods=["GET"])
 def get_vehicles():
-    """Lists vehicles with optional status query parameters."""
+    """Lists vehicles with optional status query parameters and seat calculations."""
     availability = request.args.get("availability_status")
     maintenance = request.args.get("maintenance_status")
-    vehicles = VehicleModel.list_all(availability_status=availability, maintenance_status=maintenance)
+    vehicle_type = request.args.get("vehicle_type")
+    vehicles = VehicleModel.list_all(availability_status=availability, maintenance_status=maintenance, vehicle_type=vehicle_type)
     return api_response(data=vehicles, message="Vehicles retrieved successfully")
+
+
+@vehicles_bp.route("/emergency", methods=["GET"])
+def get_emergency_vehicles():
+    """Lists P1 emergency vehicles (Ambulance, Car, Van) with assigned drivers and seat availability."""
+    all_v = VehicleModel.list_all(availability_status="available")
+    # Filter for Ambulance, Car, or Van
+    emergency = [
+        v for v in all_v 
+        if any(t in (v.get("vehicle_type") or "").lower() or t in (v.get("model") or "").lower() 
+               for t in ["ambulance", "car", "van"])
+    ]
+    return api_response(data=emergency, message="Emergency vehicles retrieved successfully")
+
+
+@vehicles_bp.route("/standby", methods=["GET"])
+def get_standby_vehicles():
+    """Lists only unassigned standby vehicles not assigned to any route schedule."""
+    from backend.app.db import execute_query
+    query = """
+        SELECT v.*,
+               MAX(0, v.capacity) AS available_seats
+        FROM vehicles v
+        WHERE v.availability_status = 'available'
+          AND v.maintenance_status != 'critical'
+          AND v.vehicle_id NOT IN (
+              SELECT DISTINCT vehicle_id FROM schedules WHERE status != 'cancelled'
+          )
+        ORDER BY v.capacity DESC
+    """
+    standby = execute_query(query, fetch="all") or []
+    return api_response(data=standby, message="Standby unassigned vehicles retrieved successfully")
 
 
 @vehicles_bp.route("/<int:vehicle_id>", methods=["GET"])
@@ -41,9 +74,11 @@ def create_vehicle():
         vehicle = VehicleModel.create(
             registration_number=data["registration_number"],
             model=data["model"],
-            capacity=data["capacity"],
+            capacity=int(data["capacity"]),
             availability_status=data.get("availability_status", "available"),
-            maintenance_status=data.get("maintenance_status", "good")
+            maintenance_status=data.get("maintenance_status", "good"),
+            owner_type=data.get("owner_type", "college"),
+            vehicle_type=data.get("vehicle_type", data.get("model"))
         )
         return api_response(data=vehicle, message="Vehicle created successfully", status_code=201)
     except ValueError as e:
