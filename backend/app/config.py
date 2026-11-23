@@ -9,10 +9,9 @@ load_dotenv(BASE_DIR / ".env")
 class Config:
     """Base configuration class."""
     SECRET_KEY = os.getenv("SECRET_KEY", "campusmove-dev-secret-key-2026")
-    DB_TYPE = os.getenv("DB_TYPE", "sqlite")  # 'sqlite' or 'mysql'
-
-    # SQLite Settings
-    SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", str(BASE_DIR / "campusmove.db"))
+    # MySQL is the application database. SQLite remains available only to the
+    # isolated test configuration below.
+    DB_TYPE = os.getenv("DB_TYPE", "mysql")
 
     # MySQL Settings
     MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
@@ -31,7 +30,7 @@ class DevelopmentConfig(Config):
 
 
 class TestingConfig(Config):
-    """Testing configuration with in-memory SQLite and isolated environment."""
+    """Testing configuration with an isolated in-memory SQLite database."""
     TESTING = True
     DEBUG = True
     DB_TYPE = "sqlite"
