@@ -27,14 +27,12 @@ development defaults.
 
 Windows users should follow the step-by-step [Windows setup guide](docs/windows-setup-guide.md).
 
-For a ready-made presentation flow—including the deadlock detector and what
-each refresh button does—see the [viva demonstration guide](docs/viva-demo-guide.md).
 
 ## Project layout
 
 - `backend/` — Flask API, MySQL data access, and automated tests.
 - `frontend/` — the browser UI served by Flask.
 - `db/` — MySQL schema and repeatable demo seed data.
-- `docs/` — Windows setup, deadlock notes, and the viva guide.
+- `docs/` — Windows setup.
 - `reports/phase-3/` — the final Phase 3 PDF/source with its college logos and member images.
 - `legacysqllitedb` — preserved SQLite backup for one-time migration only.
