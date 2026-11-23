@@ -10,8 +10,11 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 from backend.app import create_app
-from backend.app.db import init_db, seed_db, get_db
+from backend.app.db import init_db, seed_db, execute_query
 
 def main():
     app = create_app("development")
@@ -26,19 +29,22 @@ def main():
         seed_db(seed_path)
         print("✅ Seed data inserted successfully.")
 
-        # Display summary of loaded data
-        db = get_db()
-        users_count = db.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
-        vehicles_count = db.execute("SELECT COUNT(*) as c FROM vehicles").fetchone()["c"]
-        pvt_vehicles_count = db.execute("SELECT COUNT(*) as c FROM private_vehicles").fetchone()["c"]
-        maintenance_count = db.execute("SELECT COUNT(*) as c FROM maintenance").fetchone()["c"]
-        drivers_count = db.execute("SELECT COUNT(*) as c FROM drivers").fetchone()["c"]
-        routes_count = db.execute("SELECT COUNT(*) as c FROM routes").fetchone()["c"]
-        stops_count = db.execute("SELECT COUNT(*) as c FROM stops").fetchone()["c"]
-        carpools_count = db.execute("SELECT COUNT(*) as c FROM carpools").fetchone()["c"]
-        schedules_count = db.execute("SELECT COUNT(*) as c FROM schedules").fetchone()["c"]
-        requests_count = db.execute("SELECT COUNT(*) as c FROM transport_requests").fetchone()["c"]
-        bookings_count = db.execute("SELECT COUNT(*) as c FROM bookings").fetchone()["c"]
+        # Display a database-agnostic summary. Direct ``db.execute`` works
+        # for sqlite3 but not for PyMySQL connections.
+        def count_rows(table_name):
+            return execute_query(f"SELECT COUNT(*) AS c FROM {table_name}", fetch="one")["c"]
+
+        users_count = count_rows("users")
+        vehicles_count = count_rows("vehicles")
+        pvt_vehicles_count = count_rows("private_vehicles")
+        maintenance_count = count_rows("maintenance")
+        drivers_count = count_rows("drivers")
+        routes_count = count_rows("routes")
+        stops_count = count_rows("stops")
+        carpools_count = count_rows("carpools")
+        schedules_count = count_rows("schedules")
+        requests_count = count_rows("transport_requests")
+        bookings_count = count_rows("bookings")
 
         print("\n📊 Database Summary (100% ER Diagram Parity):")
         print(f"  • Student / Users:     {users_count}")
