@@ -1,1 +1,11 @@
+# Python-generated files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+tmp/
+
+# Editor and operating-system metadata
+.vscode/
+.DS_Store
+.env
 
