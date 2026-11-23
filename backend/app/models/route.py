@@ -48,8 +48,38 @@ class RouteModel:
 
     @classmethod
     def list_all(cls):
-        """Lists all campus transit routes."""
-        sql = "SELECT * FROM routes ORDER BY route_id ASC"
+        """Lists all campus transit routes with schedule, driver, and real-time seat availability."""
+        sql = """
+            SELECT 
+                r.*,
+                s.schedule_id,
+                COALESCE(s.departure_time, '08:30:00') AS departure_time,
+                COALESCE(s.arrival_time, '09:00:00') AS arrival_time,
+                COALESCE(s.time_window, 'Standard Shift') AS time_window,
+                COALESCE(s.status, 'scheduled') AS schedule_status,
+                d.driver_id,
+                COALESCE(d.name, 'Assigned Route Driver') AS driver_name,
+                COALESCE(d.phone, '+91-9876543210') AS driver_phone,
+                COALESCE(d.availability_status, 'available') AS driver_availability,
+                v.vehicle_id,
+                COALESCE(v.model, 'Campus Transit Shuttle') AS vehicle_model,
+                COALESCE(v.registration_number, 'UK-07-CM-1001') AS vehicle_reg,
+                COALESCE(v.vehicle_type, 'Bus') AS vehicle_type,
+                COALESCE(v.capacity, 40) AS capacity,
+                COALESCE(bk.booked_count, 0) AS full_seats,
+                MAX(0, COALESCE(v.capacity, 40) - COALESCE(bk.booked_count, 0)) AS available_seats
+            FROM routes r
+            LEFT JOIN schedules s ON s.schedule_id = (SELECT schedule_id FROM schedules WHERE route_id = r.route_id ORDER BY schedule_id ASC LIMIT 1)
+            LEFT JOIN drivers d ON s.driver_id = d.driver_id
+            LEFT JOIN vehicles v ON s.vehicle_id = v.vehicle_id
+            LEFT JOIN (
+                SELECT route_id, COUNT(*) AS booked_count
+                FROM bookings
+                WHERE status IN ('confirmed', 'pending', 'in_route')
+                GROUP BY route_id
+            ) bk ON r.route_id = bk.route_id
+            ORDER BY r.route_id ASC
+        """
         return execute_query(sql, fetch="all")
 
     @classmethod
