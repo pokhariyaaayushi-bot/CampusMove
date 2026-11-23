@@ -1,5 +1,5 @@
 """
-Schedule REST CRUD Endpoints (Relational Joins)
+Schedule REST CRUD Endpoints (Relational Joins & Multiple Time-Slot Directions)
 """
 
 from flask import Blueprint, request
@@ -11,10 +11,11 @@ schedules_bp = Blueprint("schedules", __name__, url_prefix="/api/schedules")
 
 @schedules_bp.route("", methods=["GET"])
 def get_schedules():
-    """Lists schedules with joined route, vehicle, and driver details."""
+    """Lists schedules with joined route, vehicle, driver details, and optional direction filter."""
     route_id = request.args.get("route_id", type=int)
     status = request.args.get("status")
-    schedules = ScheduleModel.list_all(route_id=route_id, status=status, detailed=True)
+    direction = request.args.get("direction")
+    schedules = ScheduleModel.list_all(route_id=route_id, status=status, direction=direction, detailed=True)
     return api_response(data=schedules, message="Schedules retrieved successfully")
 
 
@@ -29,7 +30,7 @@ def get_schedule(schedule_id: int):
 
 @schedules_bp.route("", methods=["POST"])
 def create_schedule():
-    """Creates a new transit schedule."""
+    """Creates a new transit schedule with direction."""
     data = request.get_json() or {}
     required = ["route_id", "vehicle_id", "driver_id", "departure_time", "arrival_time", "time_window"]
     missing = [f for f in required if f not in data]
@@ -44,7 +45,8 @@ def create_schedule():
             departure_time=data["departure_time"],
             arrival_time=data["arrival_time"],
             time_window=data["time_window"],
-            status=data.get("status", "scheduled")
+            status=data.get("status", "scheduled"),
+            direction=data.get("direction", "inbound")
         )
         return api_response(data=schedule, message="Schedule created successfully", status_code=201)
     except ValueError as e:
@@ -61,7 +63,7 @@ def create_schedule():
 
 @schedules_bp.route("/<int:schedule_id>", methods=["PUT"])
 def update_schedule(schedule_id: int):
-    """Updates schedule details or status."""
+    """Updates schedule details, direction, or status."""
     data = request.get_json() or {}
     try:
         schedule = ScheduleModel.update(schedule_id, **data)
@@ -77,10 +79,7 @@ def update_schedule(schedule_id: int):
 @schedules_bp.route("/<int:schedule_id>", methods=["DELETE"])
 def delete_schedule(schedule_id: int):
     """Deletes a schedule."""
-    try:
-        success = ScheduleModel.delete(schedule_id)
-        if not success:
-            return api_error(message=f"Schedule with ID {schedule_id} not found", error_code="NOT_FOUND", status_code=404)
-        return api_response(message="Schedule deleted successfully")
-    except Exception as e:
-        return api_error(message=str(e), error_code="DATABASE_ERROR", status_code=500)
+    success = ScheduleModel.delete(schedule_id)
+    if not success:
+        return api_error(message=f"Schedule with ID {schedule_id} not found", error_code="NOT_FOUND", status_code=404)
+    return api_response(message="Schedule deleted successfully")
